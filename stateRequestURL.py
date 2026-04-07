@@ -1,25 +1,16 @@
 import requests
 import jmespath
 
-from pipeline import create_kia_table, insert_kia_batch
-
-TABLE_NAME = "kia_dealers"
+from pipeline import create_state_city_table, insert_state_city_batch
 
 
-def get_request():
+def get_data():
     url = "https://www.kia.com/api/kia2_in/findAdealer.getStateCity.do"
-
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print("REQUEST FAILED:", e)
-        return {}
+    return requests.get(url).json()
 
 
-def get_state_data(data):
-    expression = """
+def parse(data):
+    exp = """
     data.stateAndCity[].{
         state_name: val1.value,
         state_key: val1.key,
@@ -29,65 +20,34 @@ def get_state_data(data):
         }
     }
     """
-
-    try:
-        return jmespath.search(expression, data) or []
-    except Exception as e:
-        print("JMESPATH ERROR:", e)
-        return []
+    return jmespath.search(exp, data)
 
 
-def prepare_data(states):
-    final_rows = []
+def prepare(states):
+    rows = []
 
-    for state in states:
-        state_name = state.get("state_name")
-        state_key = state.get("state_key")
-
-        cities = state.get("cities") or []
-
-        for city in cities:
-            city_name = city.get("city_name")
-            city_key = city.get("city_key")
-
-            if not state_key or not city_key:
-                continue
-
-            url = f"https://www.kia.com/in/buy/find-a-dealer/result.html?state={state_key}&city={city_key}"
-
-            final_rows.append({
-                "state_name": state_name,
-                "state_key": state_key,
-                "city_name": city_name,
-                "city_key": city_key,
-                "url": url,
-                "status": "pending"
+    for s in states:
+        for c in s["cities"]:
+            rows.append({
+                "state_name": s["state_name"],
+                "state_key": s["state_key"],
+                "city_name": c["city_name"],
+                "city_key": c["city_key"]
             })
 
-    return final_rows
+    return rows
 
 
 def main():
     print("STARTING...")
 
-    create_kia_table(TABLE_NAME)
+    create_state_city_table()
 
-    data = get_request()
-    if not data:
-        print("NO DATA FOUND")
-        return
+    data = get_data()
+    states = parse(data)
+    rows = prepare(states)
 
-    states = get_state_data(data)
-    if not states:
-        print("NO STATES FOUND")
-        return
-
-    rows = prepare_data(states)
-    if not rows:
-        print("NO ROWS TO INSERT")
-        return
-
-    insert_kia_batch(TABLE_NAME, rows)
+    insert_state_city_batch(rows)
 
     print("TOTAL INSERTED:", len(rows))
     print("DONE")
